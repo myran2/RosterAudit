@@ -1,0 +1,16 @@
+blizzApiClientId = ""
+blizzApiClientSecret = ""
+
+guildTrackRanks = [
+    0, # GM
+    1, # Octofriend
+    3, # 8-Armed Buddy
+]
+guildRealmSlug = "bleeding-hollow"
+guildNameSlug = "octopals"
+
+mysqlHost = "localhost"
+mysqlPort = 3306
+mysqlUser = ""
+mysqlPasswd = ""
+mysqlDb = ""
