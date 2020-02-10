@@ -1,3 +1,5 @@
+ #!/usr/local/bin/python3
+
 import Config
 import mysql.connector as mariadb
 from wowapi import WowApi
@@ -41,7 +43,7 @@ for raider in roster:
     try:
         character = api.get_character_equipment_summary('us', 'profile-us', 'bleeding-hollow', raider)
     except:
-        print("\t not found")
+        print("{} not found. skipping".format(raider))
         continue
 
     charName = character["character"]["name"]
