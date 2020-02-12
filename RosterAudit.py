@@ -2,8 +2,10 @@
 
 import Config
 import mysql.connector as mariadb
+import datetime
 from wowapi import WowApi
 from wowapi.mixins.game_data import GameDataMixin
+from wowapi.mixins.profile import ProfileMixin
 
 # connect to DB
 dbCon = mariadb.connect(
@@ -42,6 +44,7 @@ for name in db:
 for raider in roster:
     try:
         character = api.get_character_equipment_summary('us', 'profile-us', 'bleeding-hollow', raider)
+        keystoneProfile = ProfileMixin.get_character_mythic_keystone_profile(api, 'us', 'profile-us', 'bleeding-hollow', raider)["current_period"]
     except:
         print("{} not found. skipping".format(raider))
         continue
@@ -56,6 +59,9 @@ for raider in roster:
 
     for item in character["equipped_items"]:
         if item["slot"]["type"] == "NECK":
+            # not wearing correct neck
+            if item["item"]["id"] != 158075:
+                continue
             neckLevel = item["azerite_details"]["level"]["value"]
             neckLevelPercentage = item["azerite_details"]["percentage_to_next_level"]
 
@@ -64,12 +70,30 @@ for raider in roster:
         if item["slot"]["type"] == "BACK":
             # not wearing legendary cape
             if item["item"]["id"] != 169223:
-                break
+                continue
             capeLevel = int(((item["level"]["value"] - 470) / 2) + 1)
-            break
 
     query = "INSERT INTO raider_history (raider_id, neck_level, cape_level) VALUES (%s, %s, %s)"
     values = (charId, neckLevel, capeLevel)
     db.execute(query, values)
+
+    maxLevel = 0
+    maxId = ""
+    maxTime = 0
+    # best_runs only included in the response if the specified raider has run 1+ keys this reset.
+    if "best_runs" in keystoneProfile:
+        # find highest key run this week
+        for k in keystoneProfile["best_runs"]:
+            level = int(k["keystone_level"])
+            if level > maxLevel:
+                maxLevel = level
+                maxId = k["dungeon"]["id"]
+                maxTime = int(k["completed_timestamp"])
+
+        # convert blizzard API epoch time (in ms) to sql datetime
+        sqlDateTime = datetime.datetime.fromtimestamp(maxTime/1000).strftime('%Y-%m-%d %H:%M:%S')
+        query = "INSERT INTO raider_key_history (raider_id, key_level, dungeon, timestamp) VALUES (%s, %s, %s, %s)"
+        values = (charId, maxLevel, maxId, sqlDateTime)
+        db.execute(query, values)
 
 dbCon.commit()

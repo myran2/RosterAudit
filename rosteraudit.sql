@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS `raider_key_history` (
   `raider_id` bigint(20) unsigned NOT NULL,
   `key_level` tinyint(3) unsigned NOT NULL,
   `dungeon` tinyint(3) unsigned NOT NULL,
-  `timestamp` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `timestamp` datetime NOT NULL,
+  PRIMARY KEY (`timestamp`,`raider_id`),
   KEY `FK_raider_key_history_raider` (`raider_id`),
   CONSTRAINT `FK_raider_key_history_raider` FOREIGN KEY (`raider_id`) REFERENCES `raider` (`blizz_id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
