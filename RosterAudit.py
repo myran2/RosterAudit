@@ -92,7 +92,7 @@ for raider in roster:
 
         # convert blizzard API epoch time (in ms) to sql datetime
         sqlDateTime = datetime.datetime.fromtimestamp(maxTime/1000).strftime('%Y-%m-%d %H:%M:%S')
-        query = "INSERT INTO raider_key_history (raider_id, key_level, dungeon, timestamp) VALUES (%s, %s, %s, %s)"
+        query = "INSERT INTO raider_key_history (raider_id, key_level, dungeon, timestamp) VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE raider_id=raider_id"
         values = (charId, maxLevel, maxId, sqlDateTime)
         db.execute(query, values)
 
