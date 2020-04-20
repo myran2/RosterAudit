@@ -46,7 +46,10 @@ for raider in roster:
         character = api.get_character_equipment_summary('us', 'profile-us', 'bleeding-hollow', raider)
         keystoneProfile = ProfileMixin.get_character_mythic_keystone_profile(api, 'us', 'profile-us', 'bleeding-hollow', raider)["current_period"]
     except:
-        print("{} not found. skipping".format(raider))
+        print("{} not found. skipping and removing from DB.".format(raider))
+        query = "DELETE FROM raider WHERE LOWER(`name`) = %s"
+        values = (raider)
+        db.execute(query, values)
         continue
 
     charName = character["character"]["name"]
@@ -72,6 +75,8 @@ for raider in roster:
             if item["item"]["id"] != 169223:
                 continue
             capeLevel = int(((item["level"]["value"] - 470) / 2) + 1)
+            if capeLevel > 15:
+                capeLevel = 15
 
     query = "INSERT INTO raider_history (raider_id, neck_level, cape_level) VALUES (%s, %s, %s)"
     values = (charId, neckLevel, capeLevel)
