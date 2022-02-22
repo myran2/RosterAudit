@@ -1,104 +1,85 @@
 #!/usr/bin/python3
 
-import Config
-import mysql.connector as mariadb
 import datetime
+import requests
+from ratelimit import limits, sleep_and_retry
+import mysql.connector as mariadb
 from wowapi import WowApi
-from wowapi.mixins.game_data import GameDataMixin
-from wowapi.mixins.profile import ProfileMixin
+import Config
 
-# connect to DB
-dbCon = mariadb.connect(
-    host=Config.mysqlHost,
-    user=Config.mysqlUser,
-    passwd=Config.mysqlPasswd,
-    database=Config.mysqlDb
-)
-db = dbCon.cursor()
+WOW_WEEKLY_RESET_TIME_UTC = 15
 
-api = WowApi(Config.blizzApiClientId, Config.blizzApiClientSecret)
-guild = GameDataMixin.get_guild_roster_data(api, 'us', 'profile-us', Config.guildRealmSlug, Config.guildNameSlug)
-for member in guild["members"]:
-    if member["rank"] in Config.guildTrackRanks:
-        char = member["character"]
+def getLastWeeklyResetDateTime():
+    curTime = datetime.datetime.utcnow()
+    # it's a tuesday but before reset, so we want last tuesday
+    if curTime.hour < WOW_WEEKLY_RESET_TIME_UTC:
+        addlWeekOffset = 7
+    # go back to monday of last week
+    lastReset = curTime - datetime.timedelta(days=curTime.weekday()+addlWeekOffset)
+    # add a whole day, becoming tuesday
+    lastReset += datetime.timedelta(days=1)
+    lastReset = lastReset.replace(hour=WOW_WEEKLY_RESET_TIME_UTC, minute=0, second=0, microsecond=0)
 
-        # confirm that raider is already in the DB
-        query = "SELECT name FROM raider WHERE blizz_id = {}".format(char["id"])
-        db.execute(query)
+    return lastReset.strftime('Y-m-d H:i:s')
 
-        # raider isn't in DB yet
-        if not db.fetchall():
-            query = "INSERT INTO raider (blizz_id, name, playerClass, playerRoles) VALUES (%s, %s, %s, %s)"
-            values = (char["id"], char["name"], char["playable_class"]["id"], 0)
-            db.execute(query, values)
+@sleep_and_retry
+@limits(calls=300, period=60)
+def getWeeklyKeysForPlayer(name, server):
+    # retrieve the player's ten highest Mythic+ runs by Mythic+ level for the current raid week (current season only)
+    rioRequestUrl = "https://raider.io/api/v1/characters/profile?region=us&realm={0}&name={1}&fields=mythic_plus_weekly_highest_level_runs".format(server, name)
+    rioResponse = requests.get(rioRequestUrl)
+    if rioResponse.status_code != 200:
+        raise Exception('API response: {} - {}'.format(rioResponse.status_code, rioRequestUrl))
+    return rioResponse.json()['mythic_plus_weekly_highest_level_runs']
 
-# commit all inserts at once
-dbCon.commit()
+def main():
+    # connect to DB
+    DBCON = mariadb.connect(
+        host=Config.mysqlHost,
+        user=Config.mysqlUser,
+        passwd=Config.mysqlPasswd,
+        database=Config.mysqlDb
+    )
+    DB = DBCON.cursor()
 
-roster = []
-query = "SELECT name FROM raider"
-db.execute(query)
-for name in db:
-    roster.append(name[0].lower())
+    API = WowApi(Config.blizzApiClientId, Config.blizzApiClientSecret)
 
-for raider in roster:
-    try:
-        character = api.get_character_equipment_summary('us', 'profile-us', 'bleeding-hollow', raider)
-        keystoneProfile = ProfileMixin.get_character_mythic_keystone_profile(api, 'us', 'profile-us', 'bleeding-hollow', raider)["current_period"]
-    except:
-        print("{} not found. skipping and removing from DB.".format(raider))
-        query = "DELETE FROM raider WHERE LOWER(`name`) = %s"
-        values = (raider)
-        db.execute(query, values)
-        continue
+    roster = []
+    DB.execute("SELECT name FROM raider")
+    for name in DB:
+        roster.append(name[0].lower())
 
-    charName = character["character"]["name"]
-    charId = character["character"]["id"]
-    neckLevel = 0.0
-    neckLevelPercentage = 0.0
-    capeLevel = 0
+    for raider in roster:
+        try:
+            character = API.get_character_equipment_summary('us', 'profile-us', Config.guildRealmSlug, raider)
 
-    print(charName)
+            # grab weekly pvp wins: bnet /profile/wow/character/{realmSlug}/{characterName}/pvp-bracket/{pvpBracket}
+            pvpBrackets = {
+                "2v2": API.get_character_pvp_bracket_stats('us', 'profile-us', Config.guildRealmSlug, raider, '2v2')['weekly_match_statistics'],
+                "3v3": API.get_character_pvp_bracket_stats('us', 'profile-us', Config.guildRealmSlug, raider, '3v3')['weekly_match_statistics'],
+                "rbg": API.get_character_pvp_bracket_stats('us', 'profile-us', Config.guildRealmSlug, raider, 'rbg')['weekly_match_statistics']
+            }
 
-    for item in character["equipped_items"]:
-        if item["slot"]["type"] == "NECK":
-            # not wearing correct neck
-            if item["item"]["id"] != 158075:
-                continue
-            neckLevel = item["azerite_details"]["level"]["value"]
-            neckLevelPercentage = item["azerite_details"]["percentage_to_next_level"]
+        except Exception as err:
+            print(err)
+            print("{} not found. skipping.".format(raider))
+            continue
 
-            neckLevel += round(neckLevelPercentage, 2)
+        charName = character["character"]["name"]
+        charId = character["character"]["id"]
 
-        if item["slot"]["type"] == "BACK":
-            # not wearing legendary cape
-            if item["item"]["id"] != 169223:
-                continue
-            capeLevel = int(((item["level"]["value"] - 470) / 2) + 1)
-            if capeLevel > 15:
-                capeLevel = 15
+        highest10Keystones = getWeeklyKeysForPlayer(raider, Config.guildRealmSlug)
+        for key in highest10Keystones:
+            query = "DELETE FROM raider_key_history WHERE timestamp >= '%s'"
+            values = (getLastWeeklyResetDateTime())
+            DB.execute(query, values)
 
-    query = "INSERT INTO raider_history (raider_id, neck_level, cape_level) VALUES (%s, %s, %s)"
-    values = (charId, neckLevel, capeLevel)
-    db.execute(query, values)
+            query = "INSERT INTO raider_key_history (raider_id, key_level, dungeon) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE key_level=%s"
+            values = (charId, key['mythic_level'], key['zone_id'], key['mythic_level'])
+            DB.execute(query, values)
 
-    maxLevel = 0
-    maxId = ""
-    maxTime = 0
-    # best_runs only included in the response if the specified raider has run 1+ keys this reset.
-    if "best_runs" in keystoneProfile:
-        # find highest key run this week
-        for k in keystoneProfile["best_runs"]:
-            level = int(k["keystone_level"])
-            if level > maxLevel:
-                maxLevel = level
-                maxId = k["dungeon"]["id"]
-                maxTime = int(k["completed_timestamp"])
+    DBCON.commit()
 
-        # convert blizzard API epoch time (in ms) to sql datetime
-        sqlDateTime = datetime.datetime.fromtimestamp(maxTime/1000).strftime('%Y-%m-%d %H:%M:%S')
-        query = "INSERT INTO raider_key_history (raider_id, key_level, dungeon, timestamp) VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE raider_id=raider_id"
-        values = (charId, maxLevel, maxId, sqlDateTime)
-        db.execute(query, values)
 
-dbCon.commit()
+if __name__ == '__main__':
+  main()
