@@ -10,6 +10,12 @@ import Config
 
 WOW_WEEKLY_RESET_TIME_UTC = 15
 
+PVP_BRACKET_TO_ID = {
+    "2v2": 0,
+    "3v3": 1,
+    "rbg": 2
+}
+
 # connect to DB
 DBCON = mariadb.connect(
     host=Config.mysqlHost,
@@ -78,30 +84,34 @@ def main():
     refreshRoster(API)
 
     roster = []
-    DB.execute("SELECT name FROM raider WHERE NOT `ignore`")
-    for name in DB:
-        roster.append(name[0].lower())
+    DB.execute("SELECT name, realm FROM raider WHERE NOT `ignore`")
+    for row in DB:
+        roster.append({
+            "name": row[0].lower(),
+            "realm": row[1].lower()
+        })
 
     for raider in roster:
         try:
-            character = API.get_character_equipment_summary('us', 'profile-us', Config.guildRealmSlug, raider)
+            character = API.get_character_equipment_summary('us', 'profile-us', raider['realm'], raider['name'])
 
             # grab weekly pvp wins: bnet /profile/wow/character/{realmSlug}/{characterName}/pvp-bracket/{pvpBracket}
-            #pvpBrackets = {
-            #    "2v2": API.get_character_pvp_bracket_stats('us', 'profile-us', Config.guildRealmSlug, raider, '2v2')['weekly_match_statistics'],
-            #    "3v3": API.get_character_pvp_bracket_stats('us', 'profile-us', Config.guildRealmSlug, raider, '3v3')['weekly_match_statistics'],
-            #    "rbg": API.get_character_pvp_bracket_stats('us', 'profile-us', Config.guildRealmSlug, raider, 'rbg')['weekly_match_statistics']
-            #}
+            pvpBrackets = {
+                "2v2": API.get_character_pvp_bracket_stats('us', 'profile-us', raider['realm'], raider['name'], '2v2'),
+                "3v3": API.get_character_pvp_bracket_stats('us', 'profile-us', raider['realm'], raider['name'], '3v3'),
+                "rbg": API.get_character_pvp_bracket_stats('us', 'profile-us', raider['realm'], raider['name'], 'rbg')
+            }
 
         except Exception as err:
-            print(err)
-            print("{} not found. skipping.".format(raider))
+            #print(err)
+            #print("{} not found. skipping.".format(raider['name']))
             continue
 
         charName = character["character"]["name"]
         charId = character["character"]["id"]
 
-        highest10Keystones = getWeeklyKeysForPlayer(raider, Config.guildRealmSlug)
+        # 10 highest weekly keys (from r.io)
+        highest10Keystones = getWeeklyKeysForPlayer(raider['name'], raider['realm'])
         query = "DELETE FROM raider_key_history WHERE timestamp >= %s AND raider_id = %s"
         values = (getLastWeeklyResetDateTime(), charId)
         DB.execute(query, values)
@@ -109,6 +119,28 @@ def main():
             query = "INSERT INTO raider_key_history (raider_id, key_level, dungeon) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE key_level=%s"
             values = (charId, key['mythic_level'], key['zone_id'], key['mythic_level'])
             DB.execute(query, values)
+
+        # rated PvP wins
+        query = "DELETE FROM raider_pvp_history WHERE timestamp >= %s AND raider_id = %s"
+        values = (getLastWeeklyResetDateTime(), charId)
+        DB.execute(query, values)
+        for bracket, apiRes in pvpBrackets.items():
+            rating = apiRes['rating'] if 'rating' in apiRes else 0
+
+            wins = 0
+            losses = 0
+            bracket_id = PVP_BRACKET_TO_ID[bracket]
+            if 'weekly_match_statistics' in apiRes:
+                wins = apiRes['weekly_match_statistics']['won']
+                losses = apiRes['weekly_match_statistics']['lost']
+
+            if wins + losses > 0:
+                print("{} won: {}, lost:{}".format(raider['name'], wins, losses))
+                query = """INSERT INTO raider_pvp_history (raider_id, bracket, win_count, loss_count, rating)
+                            VALUES (%s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE win_count=%s, loss_count=%s, rating=%s"""
+                values = (charId, bracket_id, wins, losses, rating, wins, losses, rating)
+                DB.execute(query, values)
+
 
     DBCON.commit()
 

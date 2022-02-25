@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS `raider` (
   `blizz_id` bigint(20) unsigned NOT NULL,
   `name` tinytext NOT NULL,
   `playerClass` tinyint(3) unsigned NOT NULL,
-  `playerRoles` tinyint(3) unsigned NOT NULL,
+  `playerRoles` tinyint(3) unsigned NOT NULL DEFAULT 0,
+  `ignore` tinyint(4) NOT NULL DEFAULT 0,
+  `realm` tinytext NOT NULL DEFAULT 'bleeding-hollow',
   PRIMARY KEY (`blizz_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
@@ -65,7 +67,8 @@ CREATE TABLE IF NOT EXISTS `raider_pvp_history` (
   `raider_id` bigint(20) unsigned NOT NULL,
   `bracket` tinyint(3) unsigned NOT NULL,
   `win_count` smallint(5) unsigned NOT NULL,
-  `weekly_honor` smallint(5) unsigned NOT NULL,
+  `loss_count` smallint(5) unsigned NOT NULL,
+  `rating` smallint(6) NOT NULL,
   `timestamp` datetime NOT NULL DEFAULT utc_timestamp(),
   PRIMARY KEY (`timestamp`,`raider_id`,`bracket`) USING BTREE,
   KEY `FK_raider_pvp_history_raider` (`raider_id`) USING BTREE,
