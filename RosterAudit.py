@@ -11,7 +11,8 @@ import Config
 
 WOW_WEEKLY_RESET_TIME_UTC = 15
 WOW_EXPANSION_SHADOWLANDS = 499
-WOW_CURRENT_RAID_ENCOUNTER_ID = 1193 # Sanctum of Domination. Soon: 1195 # Sepulcher of the First Ones
+WOW_CURRENT_RAID_ENCOUNTER_ID = 1195 # Sepulcher of the First Ones
+WOW_REPUTATION_THE_ENLIGHTED = 2478
 
 PVP_BRACKET_TO_ID = {
     "2v2": 0,
@@ -62,6 +63,14 @@ def getWeeklyKeysForPlayer(name, server):
         raise Exception('API response: {} - {}'.format(rioResponse.status_code, rioRequestUrl))
 
     return rioResponse.json()['mythic_plus_weekly_highest_level_runs']
+
+def getReputationForPlayer(API, rep_id, name, server):
+    character_rep_res = ProfileMixin.get_character_reputations_summary(API, 'us', 'profile-us', server, name)
+    for r in character_rep_res['reputations']:
+        if r['faction']['id'] != WOW_REPUTATION_THE_ENLIGHTED:
+            continue
+        return r['standing']['raw']
+    return 0
 
 def refreshRoster(API):
 
@@ -148,8 +157,8 @@ def main():
                                 boss_kill_count += 1
 
                         if boss_kill_count > 0:
-                            query = "INSERT INTO raider_boss_history (raider_id, raid_difficulty, boss_kill_count) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE boss_kill_count=%s"
-                            values = (charId, difficulty_id, boss_kill_count, boss_kill_count)
+                            query = "INSERT INTO raider_boss_history (raider_id, raid_difficulty, boss_kill_count) VALUES (%s, %s, %s)"
+                            values = (charId, difficulty_id, boss_kill_count)
                             DB.execute(query, values)
 
         # 10 highest weekly keys (from r.io)
@@ -158,15 +167,15 @@ def main():
         values = (getLastWeeklyResetDateTime(), charId)
         DB.execute(query, values)
         for key in highest10Keystones:
-            query = "INSERT INTO raider_key_history (raider_id, key_level, dungeon) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE key_level=%s"
-            values = (charId, key['mythic_level'], key['zone_id'], key['mythic_level'])
+            query = "INSERT INTO raider_key_history (raider_id, key_level, dungeon) VALUES (%s, %s, %s)"
+            values = (charId, key['mythic_level'], key['zone_id'])
             DB.execute(query, values)
 
         # rated PvP wins
         today = datetime.datetime.now()
-        today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_midnight = today.replace(hour=0, minute=0, second=0, microsecond=0)
         query = "DELETE FROM raider_pvp_history WHERE timestamp >= %s AND raider_id = %s"
-        values = (str(today), charId)
+        values = (str(today_midnight), charId)
         DB.execute(query, values)
         for bracket, apiRes in raiderPvpBrackets.items():
             rating = apiRes['rating'] if 'rating' in apiRes else 0
@@ -180,10 +189,20 @@ def main():
 
             if wins + losses > 0:
                 print("{} won: {}, lost:{}".format(raider['name'], wins, losses))
-                query = """INSERT INTO raider_pvp_history (raider_id, bracket, win_count, loss_count, rating)
-                            VALUES (%s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE win_count=%s, loss_count=%s, rating=%s"""
-                values = (charId, bracket_id, wins, losses, rating, wins, losses, rating)
+                query = "INSERT INTO raider_pvp_history (raider_id, bracket, win_count, loss_count, rating) VALUES (%s, %s, %s, %s, %s)"
+                values = (charId, bracket_id, wins, losses, rating)
                 DB.execute(query, values)
+
+        # The Enlightened rep
+        query = "DELETE FROM raider_rep_history WHERE timestamp >= %s AND raider_id = %s"
+        values = (str(today_midnight), charId)
+        DB.execute(query, values)
+
+        raw_rep = getReputationForPlayer(API, WOW_REPUTATION_THE_ENLIGHTED, raider['name'], raider['realm'])
+        if raw_rep > 0:
+            query = "INSERT INTO raider_rep_history (raider_id, faction_id, raw_reputation) VALUES (%s, %s, %s)"
+            values = (charId, WOW_REPUTATION_THE_ENLIGHTED, raw_rep)
+            DB.execute(query, values)
 
 
     DBCON.commit()

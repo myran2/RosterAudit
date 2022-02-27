@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS `raider_boss_history` (
   `raid_difficulty` tinyint(3) unsigned NOT NULL,
   `boss_kill_count` tinyint(3) unsigned NOT NULL,
   `timestamp` datetime NOT NULL DEFAULT utc_timestamp(),
-  PRIMARY KEY (`raider_id`,`timestamp`),
+  PRIMARY KEY (`raider_id`,`timestamp`,`raid_difficulty`) USING BTREE,
   CONSTRAINT `FK_raider_history_raider` FOREIGN KEY (`raider_id`) REFERENCES `raider` (`blizz_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS `raider_pvp_history` (
   PRIMARY KEY (`timestamp`,`raider_id`,`bracket`) USING BTREE,
   KEY `FK_raider_pvp_history_raider` (`raider_id`) USING BTREE,
   CONSTRAINT `FK_raider_pvp_history_raider` FOREIGN KEY (`raider_id`) REFERENCES `raider` (`blizz_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+-- Data exporting was unselected.
+
+-- Dumping structure for table rosteraudit.raider_rep_history
+CREATE TABLE IF NOT EXISTS `raider_rep_history` (
+  `raider_id` bigint(20) unsigned NOT NULL,
+  `faction_id` smallint(5) unsigned NOT NULL,
+  `raw_reputation` smallint(6) unsigned NOT NULL,
+  `timestamp` datetime NOT NULL DEFAULT utc_timestamp(),
+  PRIMARY KEY (`raider_id`,`timestamp`,`faction_id`) USING BTREE,
+  CONSTRAINT `FK_raider_rep_history_raider` FOREIGN KEY (`raider_id`) REFERENCES `raider` (`blizz_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 -- Data exporting was unselected.
