@@ -94,18 +94,21 @@ def main():
     for raider in roster:
         try:
             character = API.get_character_equipment_summary('us', 'profile-us', raider['realm'], raider['name'])
-
-            # grab weekly pvp wins: bnet /profile/wow/character/{realmSlug}/{characterName}/pvp-bracket/{pvpBracket}
-            pvpBrackets = {
-                "2v2": API.get_character_pvp_bracket_stats('us', 'profile-us', raider['realm'], raider['name'], '2v2'),
-                "3v3": API.get_character_pvp_bracket_stats('us', 'profile-us', raider['realm'], raider['name'], '3v3'),
-                "rbg": API.get_character_pvp_bracket_stats('us', 'profile-us', raider['realm'], raider['name'], 'rbg')
-            }
-
         except Exception as err:
-            #print(err)
-            #print("{} not found. skipping.".format(raider['name']))
+            print(err)
+            print("{} not found. skipping.".format(raider['name']))
             continue
+
+        raiderPvpBrackets = dict()
+        for bracket in PVP_BRACKET_TO_ID.keys():
+            apiRes = None
+            try:
+                apiRes = API.get_character_pvp_bracket_stats('us', 'profile-us', raider['realm'], raider['name'], bracket)
+            except Exception as err:
+                continue
+
+            if apiRes is not None:
+                raiderPvpBrackets[bracket] = apiRes
 
         charName = character["character"]["name"]
         charId = character["character"]["id"]
@@ -121,10 +124,12 @@ def main():
             DB.execute(query, values)
 
         # rated PvP wins
+        today = datetime.datetime.now()
+        today = today.replace(hour=0, minute=0, second=0, microsecond=0)
         query = "DELETE FROM raider_pvp_history WHERE timestamp >= %s AND raider_id = %s"
-        values = (getLastWeeklyResetDateTime(), charId)
+        values = (str(today), charId)
         DB.execute(query, values)
-        for bracket, apiRes in pvpBrackets.items():
+        for bracket, apiRes in raiderPvpBrackets.items():
             rating = apiRes['rating'] if 'rating' in apiRes else 0
 
             wins = 0
