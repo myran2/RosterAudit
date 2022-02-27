@@ -2,6 +2,7 @@
 
 import datetime
 import requests
+import traceback
 from ratelimit import limits, sleep_and_retry
 import mysql.connector as mariadb
 from wowapi import WowApi
@@ -9,11 +10,20 @@ from wowapi.mixins.profile import ProfileMixin
 import Config
 
 WOW_WEEKLY_RESET_TIME_UTC = 15
+WOW_EXPANSION_SHADOWLANDS = 499
+WOW_CURRENT_RAID_ENCOUNTER_ID = 1193 # Sanctum of Domination. Soon: 1195 # Sepulcher of the First Ones
 
 PVP_BRACKET_TO_ID = {
     "2v2": 0,
     "3v3": 1,
     "rbg": 2
+}
+
+RAID_DIFFICULTY_TO_ID = {
+    "MYTHIC": 0,
+    "HEROIC": 1,
+    "NORMAL": 2,
+    "LFR": 3,
 }
 
 # connect to DB
@@ -39,7 +49,7 @@ def getLastWeeklyResetDateTime():
     lastReset = lastReset.replace(hour=WOW_WEEKLY_RESET_TIME_UTC, minute=0, second=0, microsecond=0)
 
     # format as SQL DATETIME
-    return lastReset.strftime('Y-m-d H:i:s')
+    return lastReset
 
 @sleep_and_retry
 @limits(calls=300, period=60)
@@ -92,12 +102,14 @@ def main():
         })
 
     for raider in roster:
+        character_raids = None
         try:
-            character = API.get_character_equipment_summary('us', 'profile-us', raider['realm'], raider['name'])
+            character_raids = API.get_character_raids('us', 'profile-us', raider['realm'], raider['name'])
         except Exception as err:
             print(err)
             print("{} not found. skipping.".format(raider['name']))
-            continue
+            traceback.print_exc()
+            break
 
         raiderPvpBrackets = dict()
         for bracket in PVP_BRACKET_TO_ID.keys():
@@ -110,8 +122,35 @@ def main():
             if apiRes is not None:
                 raiderPvpBrackets[bracket] = apiRes
 
-        charName = character["character"]["name"]
-        charId = character["character"]["id"]
+        charName = character_raids["character"]["name"]
+        charId = character_raids["character"]["id"]
+
+        print(charName)
+
+        # boss kills (by difficulty)
+        query = "DELETE FROM raider_boss_history WHERE timestamp >= %s AND raider_id = %s"
+        values = (getLastWeeklyResetDateTime(), charId)
+        DB.execute(query, values)
+        if 'expansions' not in character_raids:
+            print("\tNo expansions in character raid statistics")
+        else:
+            for ex in character_raids['expansions']:
+                if ex['expansion']['id'] != WOW_EXPANSION_SHADOWLANDS:
+                    continue
+                for instance in ex['instances']:
+                    if instance['instance']['id'] != WOW_CURRENT_RAID_ENCOUNTER_ID:
+                        continue
+                    for m in instance['modes']:
+                        difficulty_id = RAID_DIFFICULTY_TO_ID[m['difficulty']['type']]
+                        boss_kill_count = 0
+                        for p in m['progress']['encounters']:
+                            if datetime.datetime.fromtimestamp(float(p['last_kill_timestamp'])/1000.0) > getLastWeeklyResetDateTime():
+                                boss_kill_count += 1
+
+                        if boss_kill_count > 0:
+                            query = "INSERT INTO raider_boss_history (raider_id, raid_difficulty, boss_kill_count) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE boss_kill_count=%s"
+                            values = (charId, difficulty_id, boss_kill_count, boss_kill_count)
+                            DB.execute(query, values)
 
         # 10 highest weekly keys (from r.io)
         highest10Keystones = getWeeklyKeysForPlayer(raider['name'], raider['realm'])
